@@ -895,6 +895,12 @@ __global__ void internalForces(int *interactions) {
 #endif
 
         if (matEOS[matId] != EOS_TYPE_REGOLITH && matEOS[matId] != EOS_TYPE_VISCOUS_REGOLITH) {
+            // Truesdell/Cauchy
+            tr_edot = 0.0;
+            for (d = 0; d < DIM; d++) {
+                tr_edot += edot[d][d] + rdot[d][d];
+            }
+
             for (d = 0; d < DIM; d++) {
                 for (e = 0; e < DIM; e++) {
                     // Hooke's law
@@ -911,9 +917,16 @@ __global__ void internalForces(int *interactions) {
 		            	    edotp[d][e] += (-1./3)*(1-p.jc_f[i])*edot[f][f];
 #endif
                         }
+                        // Jaumann
                         p.dSdt[stressIndex(i,d,e)] += p.S[stressIndex(i,d,f)] * rdot[e][f];
                         p.dSdt[stressIndex(i,d,e)] += p.S[stressIndex(i,e,f)] * rdot[d][f];
+                        // additional objective terms (oldroyd...)
+                        p.dSdt[stressIndex(i,d,e)] -= p.S[stressIndex(i,d,f)] * edot[e][f];
+                        p.dSdt[stressIndex(i,d,e)] -= p.S[stressIndex(i,e,f)] * edot[d][f];
                     }
+
+                    p.dSdt[stressIndex(i,d,e)] += p.S[stressIndex(i,d,e)] * tr_edot;
+
 #if PALPHA_POROSITY && STRESS_PALPHA_POROSITY
                     if (matEOS[matId] == EOS_TYPE_JUTZI || matEOS[matId] == EOS_TYPE_JUTZI_MURNAGHAN || matEOS[matId] == EOS_TYPE_JUTZI_ANEOS) {
                         p.dSdt[stressIndex(i,d,e)] = p.f[i] / p.alpha_jutzi[i] * p.dSdt[stressIndex(i,d,e)]
@@ -928,6 +941,7 @@ __global__ void internalForces(int *interactions) {
 #endif
                 }
             }
+            tr_edot = 0.0;
 
 #if JC_PLASTICITY
             /* calculate plastic strain rate tensor from dSdt */
