@@ -87,6 +87,9 @@ __global__ void internalForces(int *interactions) {
 #if SOLID
     double sigma_i[DIM][DIM], sigma_j[DIM][DIM];
     double edot[DIM][DIM], rdot[DIM][DIM];
+# ifdef LOG_RATE
+    double b[DIM][DIM];
+# endif
     double S_i[DIM][DIM];
     double sqrt_J2, I1, alpha_phi, kc;
     double lambda_dot, tr_edot;
@@ -427,7 +430,10 @@ __global__ void internalForces(int *interactions) {
                 //printf("%d\n", boundia);
                 tmp = p.m[j];
 # if TENSORIAL_CORRECTION
-                // new implementation (after july 2017, modified 2020)
+                // new implementation (after july 2017, modified 2020)           
+# ifdef LOG_RATE 
+                double defgrad_transp[DIM][DIM];
+# endif
                 for (e = 0; e < DIM; e++) {
                     for (f = 0; f < DIM; f++) {
                         for (kk = 0; kk < DIM; kk++) {
@@ -446,6 +452,11 @@ __global__ void internalForces(int *interactions) {
                                   - p_rhs.tensorialCorrectionMatrix[i*DIM*DIM+e*DIM+kk] *
 //                                  (-dv[f]) * dr[kk] * dWdr/r);
                                   (-dv[f]) * dWdx[kk]);
+# ifdef LOG_RATE
+                            defgrad_transp[e][f] += 0.5 * p.m[j]/p.rho[j] *
+                                p_rhs.tensorialCorrectionMatrix[i*DIM*DIM+f*DIM+kk] *
+                                  (dr[e]) * dWdx[kk];
+# endif
 					    }
 			    	}
 			    }
@@ -478,6 +489,12 @@ __global__ void internalForces(int *interactions) {
                 rdot[2][2] += tmp*(dvz*dWdx[2] - dvz*dWdx[2]);
 #  endif // DIM == 3
 # endif // TENSORIAL_CORRECTION
+# ifdef LOG_RATE // for log stressrate
+                double defgrad[DIM][DIM];
+                copy_matrix(defgrad_transp, defgrad);
+                transpose_matrix(defgrad);
+                multiply(defgrad, defgrad_transp, b);
+# endif
             } // not EOS_TYPE_VISCOUS_REGOLITH
 #endif // SOLID
 
@@ -895,11 +912,76 @@ __global__ void internalForces(int *interactions) {
 #endif
 
         if (matEOS[matId] != EOS_TYPE_REGOLITH && matEOS[matId] != EOS_TYPE_VISCOUS_REGOLITH) {
-            // Truesdell/Cauchy
+#if TRUESDELL_RATE > 0 // Truesdell/Cauchy
             tr_edot = 0.0;
             for (d = 0; d < DIM; d++) {
                 tr_edot += edot[d][d] + rdot[d][d];
             }
+#endif
+#ifdef LOG_RATE // logarithmic stress rate (only DIM=3 yet)
+            double ev_b[DIM];
+            double evec[DIM][DIM];
+            calculate_all_eigenvalues(b, ev_b, evec); // Warum geht NULL für evec nicht?
+            double n_log[DIM][DIM]; 
+
+            for (d = 0; d < DIM; d++) {
+                for (e = 0; e < DIM; e++) {
+                    n_log[d][e] = 0.;
+                }
+            }
+
+            if (ev_b[0] != ev_b[1] && ev_b[1] == ev_b[2]) {
+                double e3 = ev_b[0] / ev_b[1];
+                double v = 1 / (ev_b[1] - ev_b[2]) * ( (1 + e3) / (1 - e3) + 2 / log(e3) );
+                multiply_matrix(b, edot, n_log);
+                for (d = 0; d < DIM; d++) {
+                    for (e = 0; e < DIM; e++) {
+                        n_log[d][e] *= v;
+                    }
+                }
+            } else if (ev_b[0] != ev_b[1] && ev_b[1] != ev_b[2] && ev_b[2] != ev_b[0]) {
+                double ei[3];
+                ei[0] = ev_b[1] / ev_b[2];
+                ei[1] = ev_b[2] / ev_b[0];
+                ei[2] = ev_b[0] / ev_b[1];
+                double delta = (ev_b[0] - ev_b[1]) * (ev_b[1] - ev_b[2]) * (ev_b[2] - ev_b[0]);
+
+                double bd[DIM][DIM];
+                copy_matrix(edot, bd); 
+
+                double v[3];// = {0., 0., 0.};
+                v[0] = 1e-15;
+                v[1] = 1e-15;
+                v[2] = 1e-15;
+                // double v[] = {1., 1., 1.};
+                for (f = 0; f < 3; f++) {
+                    v[0] += ev_b[f]*ev_b[f] * ( (1 + ei[f]) / (1 - ei[f]) + 2 / log(ei[f]) );                     
+                }
+                v[0] *= delta;
+                for (f = 0; f < 3; f++) {
+                    v[1] += -ev_b[f] * ( (1 + ei[f]) / (1 - ei[f]) + 2 / log(ei[f]) );                     
+                }
+                v[1] *= delta;
+                for (f = 0; f < 3; f++) {
+                    v[2] += ( (1 + ei[f]) / (1 - ei[f]) + 2 / log(ei[f]) );                     
+                }
+                v[2] *= delta;
+                
+                for (f = 0; f < 3; f++) {
+                    if (f < 2) {
+                        multiply_matrix(b, bd, bd);
+                    } else {
+                        multiply_matrix(bd, b, bd);
+                    }
+
+                    for (d = 0; d < DIM; d++) {
+                        for (e = 0; e < DIM; e++) {
+                            n_log[d][e] += v[f];// * bd[d][e];
+                        }                        
+                    }
+                }                    
+            }
+#endif
 
             for (d = 0; d < DIM; d++) {
                 for (e = 0; e < DIM; e++) {
@@ -921,11 +1003,20 @@ __global__ void internalForces(int *interactions) {
                         p.dSdt[stressIndex(i,d,e)] += p.S[stressIndex(i,d,f)] * rdot[e][f];
                         p.dSdt[stressIndex(i,d,e)] += p.S[stressIndex(i,e,f)] * rdot[d][f];
                         // additional objective terms (oldroyd...)
-                        p.dSdt[stressIndex(i,d,e)] -= p.S[stressIndex(i,d,f)] * edot[e][f];
-                        p.dSdt[stressIndex(i,d,e)] -= p.S[stressIndex(i,e,f)] * edot[d][f];
+#if OLDROYD_RATE > 0
+                        p.dSdt[stressIndex(i,d,e)] -= OLDROYD * p.S[stressIndex(i,d,f)] * edot[e][f];
+                        p.dSdt[stressIndex(i,d,e)] -= OLDROYD * p.S[stressIndex(i,e,f)] * edot[d][f];
+#endif
+#ifdef LOG_RATE // logarithmic stress rate
+                        if (!((ev_b[0] == ev_b[1]) && (ev_b[1] == ev_b[2]))) {
+                            p.dSdt[stressIndex(i,d,e)] += p.S[stressIndex(i,e,f)] * n_log[f][d];
+                            p.dSdt[stressIndex(i,d,e)] -= p.S[stressIndex(i,d,f)] * n_log[e][f];
+                        }
+#endif
                     }
-
-                    p.dSdt[stressIndex(i,d,e)] += p.S[stressIndex(i,d,e)] * tr_edot;
+#if TRUESDELL_RATE > 0
+                    p.dSdt[stressIndex(i,d,e)] += TRUESDELL * p.S[stressIndex(i,d,e)] * tr_edot;
+#endif
 
 #if PALPHA_POROSITY && STRESS_PALPHA_POROSITY
                     if (matEOS[matId] == EOS_TYPE_JUTZI || matEOS[matId] == EOS_TYPE_JUTZI_MURNAGHAN || matEOS[matId] == EOS_TYPE_JUTZI_ANEOS) {
