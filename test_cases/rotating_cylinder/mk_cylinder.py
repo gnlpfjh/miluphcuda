@@ -3,7 +3,7 @@
 
 # create initial particle distribution for a rigidly rotating sphere
 
-# the values are taken from Keisuke Sugiura's phd thesis p.26
+# vgl kevin Schals Studienarbeit
 # units are
 # density rho_0
 # sound speed cs
@@ -18,7 +18,6 @@ import random
 dx = 0.2
 x = np.arange(-1, 1+dx, dx)
 y = np.arange(-1, 1+dx, dx)
-z = np.arange(-1, 1+dx, dx)
 
 Rmax = 1.0
 cs = 1.0
@@ -31,8 +30,11 @@ rho0 = 1.0
 mass0 = dx**3 * rho0
 mass1 = dx**3 * rho1
 
-
 be_random = 0
+
+h = 6 * Rmax + dx
+h2 = h/2
+z = np.arange(-h2, h2+dx, dx)
 
 omega = 2*np.pi*1e-2 * cs / Rmax
 
@@ -63,5 +65,5 @@ for i in x:
                 xj = j
                 xk = k
 
-            print("%g %g %g %g %g 0.0 %g %g 0.0 %d 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0" % (xi, xj, xk, -xj*omega, xi*omega, mass, rho, material_type))
+            print("%g %g %g 0.0 %g %g %g %g 0.0 %d 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0" % (xi, xj, xk, xi*omega, xj*omega, mass, rho, material_type))
 
