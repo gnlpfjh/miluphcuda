@@ -89,6 +89,9 @@ __global__ void internalForces(int *interactions) {
     double edot[DIM][DIM], rdot[DIM][DIM];
 # ifdef LOG_RATE
     double b[DIM][DIM];
+    double da[DIM];
+    double dWdra;
+    double dWda[DIM];
 # endif
     double S_i[DIM][DIM];
     double sqrt_J2, I1, alpha_phi, kc;
@@ -326,6 +329,12 @@ __global__ void internalForces(int *interactions) {
 
             // get kernel values for this interaction
 #if AVERAGE_KERNELS
+# ifdef LOG_RATE
+            da[0] = p_rhs.x[i] - p_rhs.x[j];
+            da[1] = p_rhs.y[i] - p_rhs.y[j];
+            da[2] = p_rhs.z[i] - p_rhs.z[j];
+            kernel(&W, dWda, &dWdra, da, p_rhs.h[i]);
+# endif
             kernel(&W, dWdx, &dWdr, dr, p.h[i]);
             kernel(&Wj, dWdxj, &dWdrj, dr, p.h[j]);
 # if SHEPARD_CORRECTION
@@ -432,7 +441,7 @@ __global__ void internalForces(int *interactions) {
 # if TENSORIAL_CORRECTION
                 // new implementation (after july 2017, modified 2020)           
 # ifdef LOG_RATE 
-                double defgrad_transp[DIM][DIM];
+                double defgrad_transp[DIM][DIM]; // matrix F -> B = F F^T
 # endif
                 for (e = 0; e < DIM; e++) {
                     for (f = 0; f < DIM; f++) {
@@ -455,7 +464,7 @@ __global__ void internalForces(int *interactions) {
 # ifdef LOG_RATE
                             defgrad_transp[e][f] += 0.5 * p.m[j]/p.rho[j] *
                                 p_rhs.tensorialCorrectionMatrix[i*DIM*DIM+f*DIM+kk] *
-                                  (dr[e]) * dWdx[kk];
+                                  (-dr[e]) * dWda[kk];
 # endif
 					    }
 			    	}
@@ -492,8 +501,9 @@ __global__ void internalForces(int *interactions) {
 # ifdef LOG_RATE // for log stressrate
                 double defgrad[DIM][DIM];
                 copy_matrix(defgrad_transp, defgrad);
-                transpose_matrix(defgrad);
-                multiply(defgrad, defgrad_transp, b);
+                // transpose_matrix(defgrad);
+                // multiply(defgrad, defgrad_transp, b);
+                multiply(defgrad_transp, defgrad, b);
 # endif
             } // not EOS_TYPE_VISCOUS_REGOLITH
 #endif // SOLID
