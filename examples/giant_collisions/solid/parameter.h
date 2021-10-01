@@ -90,6 +90,14 @@
 // add tensorial correction tensor to dSdt calculation -> better conservation of angular momentum
 #define TENSORIAL_CORRECTION 1
 
+// objective stress rates
+#define OLDROYD_RATE 0
+#define TRUESDELL_RATE 0
+// #define LOG_RATE
+// weighting factors
+#define OLDROYD 0
+#define TRUESDELL 0
+
 // Available plastic flow conditions:
 // (if you do not know what this is, choose (1) or nothing)
 //   (1) Simple von Mises plasticity with a constant yield strength, where you need in material.cfg:
